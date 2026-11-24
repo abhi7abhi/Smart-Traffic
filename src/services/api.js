@@ -1,7 +1,10 @@
 // Centralized API Service for Smart Crash & Traffic Management System
 
 export const API_BASE =
-  import.meta.env.VITE_API_URL || "http://127.0.0.1:5000";
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1"
+    ? "https://smart-traffic-nq45.onrender.com"
+    : "http://127.0.0.1:5000");
 
 export function getAuthHeader() {
   const token = localStorage.getItem("auth_token");

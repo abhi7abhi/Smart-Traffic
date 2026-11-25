@@ -42,10 +42,11 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
       setPreviousReports(data.reports || []);
     } catch (err) {
       console.warn('Error loading previous reports:', err);
+      setPreviousReports([]);
     } finally {
       setLoadingReports(false);
     }
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     loadUserReports();

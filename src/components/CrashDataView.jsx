@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchCrashReports, getPhotoUrl } from '../services/api';
+import { fetchCrashReports, fetchUserCrashReports, getPhotoUrl } from '../services/api';
 
 export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister, onNavigate, refreshTrigger = 0 }) {
   const [reports, setReports] = useState([]);
@@ -9,16 +9,27 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
   const [statusFilter, setStatusFilter] = useState('all');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [selectedPhoto, setSelectedPhoto] = useState(null);
+  const [scope, setScope] = useState(currentUser ? 'user' : 'all');
 
-  // Load all community crash reports so newly submitted reports show up immediately
+  useEffect(() => {
+    if (currentUser) {
+      setScope('user');
+    }
+  }, [currentUser]);
+
+  // Load crash reports: Scoped to user by default so new accounts start at zero until they submit
   const loadReports = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
 
     try {
-      const data = await fetchCrashReports('all');
-      const list = data.reports || [];
-      setReports(list);
+      if (scope === 'user') {
+        const data = await fetchUserCrashReports();
+        setReports(data.reports || []);
+      } else {
+        const data = await fetchCrashReports('all');
+        setReports(data.reports || []);
+      }
     } catch (err) {
       console.warn('Failed to fetch crash reports:', err);
       setErrorMsg(err.message || 'Could not load crash reports from the server.');
@@ -26,11 +37,11 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     loadReports();
-  }, [loadReports, refreshTrigger]);
+  }, [loadReports, refreshTrigger, currentUser]);
 
   // Client-side filtering across location, crash type, road condition, status, and severity
   const filtered = reports.filter((r) => {
@@ -131,12 +142,64 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
         </div>
       </div>
 
+      {/* Scope Selector: Personal Reports vs All Community Reports */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-navy-900/90 border border-slate-800 p-2 sm:p-2.5 rounded-2xl shadow-lg">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setScope('user')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              scope === 'user'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <span>👤</span>
+            <span>My Submitted Reports</span>
+            {scope === 'user' && (
+              <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] font-mono">
+                {totalCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setScope('all')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              scope === 'all'
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <span>🌐</span>
+            <span>All Community Crashes</span>
+          </button>
+        </div>
+
+        <div className="text-[11px] text-slate-400 pr-2">
+          {scope === 'user' ? (
+            currentUser ? (
+              <span>Tracking reports submitted by <strong className="text-white">{currentUser.name || currentUser.email}</strong></span>
+            ) : (
+              <span>Guest mode — <button type="button" onClick={onOpenLogin} className="text-blue-400 underline font-semibold">Sign in</button> to link your reports</span>
+            )
+          ) : (
+            <span>Showing all public verified accidents citywide</span>
+          )}
+        </div>
+      </div>
+
       {/* Summary KPI Strip — Crashes Reported by You & Severity Breakdown */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-navy-900 border border-slate-800 rounded-xl p-3.5 sm:p-4 shadow-md">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Reported by You</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+            {scope === 'user' ? 'Reported by You' : 'Total Incidents'}
+          </span>
           <span className="text-xl sm:text-2xl font-black text-white mt-1 block">{totalCount}</span>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">Total crash reports</span>
+          <span className="text-[10px] text-slate-500 mt-0.5 block">
+            {scope === 'user' ? 'Your personal crash reports' : 'Citywide registered crashes'}
+          </span>
         </div>
 
         <div className="bg-navy-900 border border-rose-500/20 rounded-xl p-3.5 sm:p-4 shadow-md">
@@ -252,14 +315,18 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
                   <div className="max-w-md mx-auto space-y-3">
                     <span className="text-4xl block">📋</span>
                     <h3 className="text-base font-bold text-white">
-                      {totalCount === 0 ? 'No Incident Reports Yet' : 'No Matching Reports Found'}
+                      {totalCount === 0
+                        ? (scope === 'user' ? 'No Incident Reports Yet' : 'No Community Crashes Found')
+                        : 'No Matching Reports Found'}
                     </h3>
                     <p className="text-xs text-slate-400 leading-relaxed">
                       {totalCount === 0
-                        ? "You haven't submitted any crash reports yet. When you report road incidents or collisions with the in-app camera, your saved reports and official verification status will appear here."
+                        ? (scope === 'user'
+                            ? "You haven't submitted any crash reports yet. Once you submit an incident report, your saved report and official severity status will appear here."
+                            : 'No community crash reports match the current criteria.')
                         : `No reports match your current filter criteria ("${search || statusFilter}"). Try adjusting your filters.`}
                     </p>
-                    {totalCount === 0 && onNavigate && (
+                    {totalCount === 0 && scope === 'user' && onNavigate && (
                       <div className="pt-2">
                         <button
                           type="button"

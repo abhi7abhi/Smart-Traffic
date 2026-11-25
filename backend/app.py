@@ -27,6 +27,8 @@ from mysql.connector import Error
 import os
 import sys
 import time
+import hmac
+import hashlib
 from datetime import datetime, timedelta, date
 import secrets
 import base64
@@ -194,15 +196,48 @@ def _save_captured_photo(photo_data):
 _active_sessions = {}
 
 
+def _generate_token(user_id):
+    """Generate a tamper-proof signed session token valid across worker instances."""
+    timestamp = int(time.time())
+    data = f"{user_id}:{timestamp}"
+    secret = str(app.secret_key or "smart_traffic_secret_key_2026")
+    sig = hmac.new(secret.encode("utf-8"), data.encode("utf-8"), hashlib.sha256).hexdigest()
+    token = f"{data}:{sig}"
+    _active_sessions[token] = user_id
+    return token
+
+
+def _verify_token(token):
+    """Verify session token via memory cache or cryptographic HMAC signature."""
+    if not token or not isinstance(token, str):
+        return None
+    if token in _active_sessions:
+        return _active_sessions[token]
+    try:
+        parts = token.split(":")
+        if len(parts) == 3:
+            uid_str, ts_str, sig = parts
+            data = f"{uid_str}:{ts_str}"
+            secret = str(app.secret_key or "smart_traffic_secret_key_2026")
+            expected_sig = hmac.new(secret.encode("utf-8"), data.encode("utf-8"), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(sig, expected_sig):
+                uid = int(uid_str)
+                _active_sessions[token] = uid
+                return uid
+    except Exception:
+        pass
+    return None
+
+
 def _get_authenticated_user():
     """Extract and validate Bearer token from Authorization header."""
     auth_header = request.headers.get("Authorization", "").strip()
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ", 1)[1].strip()
-    if not token or token not in _active_sessions:
+    user_id = _verify_token(token)
+    if not user_id:
         return None
-    user_id = _active_sessions[token]
     try:
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
@@ -263,8 +298,7 @@ def auth_register():
         app.logger.error("DB error in register: %s", e)
         return _error("Failed to register account.", 500)
 
-    token = secrets.token_hex(32)
-    _active_sessions[token] = new_user_id
+    token = _generate_token(new_user_id)
 
     return jsonify({
         "success": True,
@@ -311,8 +345,7 @@ def auth_login():
     if not user or not check_password_hash(user["password_hash"], password):
         return _error("Invalid email or password.", 401)
 
-    token = secrets.token_hex(32)
-    _active_sessions[token] = user["user_id"]
+    token = _generate_token(user["user_id"])
 
     return jsonify({
         "success": True,
@@ -487,8 +520,12 @@ def create_crash_report():
 def get_user_reports():
     user = _get_authenticated_user()
     if not user:
-        # Seamless fallback: return all recent crash reports if unauthenticated
-        return get_crash_reports()
+        return jsonify({
+            "success": True,
+            "reports": [],
+            "count": 0,
+            "message": "No authenticated session. Sign in to view your reports."
+        })
 
     sql = """
         SELECT report_id, user_id, reporter_name, location, latitude, longitude,

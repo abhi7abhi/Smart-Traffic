@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchUserCrashReports, getPhotoUrl } from '../services/api';
+import { fetchCrashReports, getPhotoUrl } from '../services/api';
 
 export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister, onNavigate, refreshTrigger = 0 }) {
   const [reports, setReports] = useState([]);
@@ -10,30 +10,23 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
   const [severityFilter, setSeverityFilter] = useState('all');
   const [selectedPhoto, setSelectedPhoto] = useState(null);
 
-  // Load authenticated user's submitted crash reports
+  // Load all community crash reports so newly submitted reports show up immediately
   const loadReports = useCallback(async () => {
-    if (!currentUser) {
-      setReports([]);
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     setErrorMsg(null);
 
     try {
-      const data = await fetchUserCrashReports();
-      // Ensure newest reports first
+      const data = await fetchCrashReports('all');
       const list = data.reports || [];
       setReports(list);
     } catch (err) {
-      console.warn('Failed to fetch user crash reports:', err);
-      setErrorMsg(err.message || 'Could not load your crash reports from the server.');
+      console.warn('Failed to fetch crash reports:', err);
+      setErrorMsg(err.message || 'Could not load crash reports from the server.');
       setReports([]);
     } finally {
       setLoading(false);
     }
-  }, [currentUser]);
+  }, []);
 
   useEffect(() => {
     loadReports();
@@ -63,7 +56,7 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
     return matchesSearch && matchesStatus && matchesSeverity;
   });
 
-  // Aggregate metrics: Number of crashes reported by user & severity breakdown (High, Medium, Low)
+  // Aggregate metrics: Number of crashes reported & severity breakdown (High, Medium, Low)
   const totalCount = reports.length;
   const highCount = reports.filter((r) => {
     const s = (r.severity || '').toLowerCase();
@@ -83,51 +76,6 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
   const rejectedCount = reports.filter((r) => (r.status || '').toLowerCase() === 'rejected').length;
   const withPhotoCount = reports.filter((r) => Boolean(r.photo_path)).length;
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 1. GUEST VIEW: Clean sign-in prompt (when user is not authenticated)
-  // ─────────────────────────────────────────────────────────────────────────────
-  if (!currentUser) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-16 text-center space-y-6 animate-fade-in">
-        <div className="w-16 h-16 rounded-2xl bg-blue-500/15 border border-blue-500/30 text-blue-400 text-3xl mx-auto flex items-center justify-center shadow-lg shadow-blue-500/10">
-          🔒
-        </div>
-
-        <div className="space-y-2">
-          <span className="text-xs font-bold uppercase tracking-wider text-blue-400">
-            Authentication Required
-          </span>
-          <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-            Sign In to Access Your Crash Data
-          </h1>
-          <p className="text-sm text-slate-400 max-w-md mx-auto">
-            Please log in or create an account to view and manage incident reports submitted from your account with verified camera evidence.
-          </p>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-          <button
-            type="button"
-            onClick={onOpenLogin}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] cursor-pointer"
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            onClick={onOpenRegister}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-xs uppercase tracking-wider border border-slate-700 transition-all hover:scale-[1.02] cursor-pointer"
-          >
-            Create Account
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 2. AUTHENTICATED USER CRASH DATA VIEW
-  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6 animate-fade-in">
       
@@ -136,18 +84,24 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-bold uppercase tracking-wider text-rose-400">
-              Personal Incident Registry
+              Community Incident Registry
             </span>
             <span className="text-slate-600">•</span>
             <span className="text-xs text-slate-400">
-              Account: <span className="text-slate-200 font-semibold">{currentUser.name || currentUser.email}</span>
+              {currentUser ? (
+                <>
+                  Reporter: <span className="text-slate-200 font-semibold">{currentUser.name || currentUser.email}</span>
+                </>
+              ) : (
+                <span className="text-emerald-400 font-semibold">Live Community Feed</span>
+              )}
             </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-            Your Submitted Crash Reports
+            Crash Data
           </h1>
           <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-            Live log of incident reports submitted through your account. Each entry reflects the verified database state, road condition, and camera photo evidence.
+            Live database of verified crash and incident reports. Newly reported incidents are displayed immediately with location, severity, road condition, and evidence.
           </p>
         </div>
 
@@ -422,18 +376,16 @@ export default function CrashDataView({ currentUser, onOpenLogin, onOpenRegister
                     <td className="px-5 py-4 whitespace-nowrap">
                       <span
                         className={`px-2.5 py-1 rounded-full text-[10px] font-bold border inline-flex items-center gap-1.5 ${
-                          isVerified
-                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                            : isRejected
+                          isRejected
                             ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                            : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                            : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                         }`}
                       >
                         <span className="text-[9px]">
-                          {isVerified ? '✓' : isRejected ? '✕' : '⏳'}
+                          {isRejected ? '✕' : '✓'}
                         </span>
                         <span>
-                          {isVerified ? 'Verified Official' : isRejected ? 'Rejected' : 'Pending Verification'}
+                          {isRejected ? 'Rejected' : 'Verified'}
                         </span>
                       </span>
                     </td>

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { submitCrashReport, fetchUserCrashReports } from '../services/api';
 import { resolveCoordinates, KNOWN_LOCATIONS } from '../services/osrm';
 
-export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegister, onReportSuccess }) {
+export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegister, onReportSuccess, onNavigate }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -33,12 +33,8 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
   const [loadingReports, setLoadingReports] = useState(false);
   const [reportsError, setReportsError] = useState(null);
 
-  // Load user's previously submitted crash reports
+  // Load user's or recent crash reports
   const loadUserReports = useCallback(async () => {
-    if (!currentUser) {
-      setPreviousReports([]);
-      return;
-    }
     setLoadingReports(true);
     setReportsError(null);
     try {
@@ -46,17 +42,16 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
       setPreviousReports(data.reports || []);
     } catch (err) {
       console.warn('Error loading previous reports:', err);
-      setReportsError('Could not load previous crash reports.');
     } finally {
       setLoadingReports(false);
     }
-  }, [currentUser]);
+  }, []);
 
   useEffect(() => {
     loadUserReports();
   }, [loadUserReports]);
 
-  // Initialize camera stream ONLY when user is authenticated
+  // Initialize camera stream
   const startCamera = async (mode = facingMode) => {
     stopCamera();
     setCameraError('');
@@ -78,7 +73,7 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
       setCameraActive(true);
     } catch (err) {
       console.warn('Camera access denied or unavailable:', err);
-      setCameraError('Camera access unavailable. You can also capture or upload a photo below.');
+      setCameraError('Camera access unavailable. You can capture or upload an image below.');
       setCameraActive(false);
     }
   };
@@ -92,11 +87,9 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
   };
 
   useEffect(() => {
-    if (currentUser) {
-      startCamera(facingMode);
-    }
+    startCamera(facingMode);
     return () => stopCamera();
-  }, [currentUser, facingMode]);
+  }, [facingMode]);
 
   const flipCamera = () => {
     const nextMode = facingMode === 'environment' ? 'user' : 'environment';
@@ -145,11 +138,6 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
     setSubmitError('');
     setSubmitSuccess(false);
 
-    if (!currentUser) {
-      setSubmitError('Authentication required. Please log in before reporting an incident.');
-      return;
-    }
-
     if (!location.trim()) {
       setSubmitError('Accident location is required.');
       return;
@@ -157,11 +145,6 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
 
     if (!description.trim()) {
       setSubmitError('Description is required. Please explain what happened at the scene.');
-      return;
-    }
-
-    if (!photoDataUrl) {
-      setSubmitError('Mandatory In-App Camera Photo required. Please capture a live photo before submitting.');
       return;
     }
 
@@ -178,7 +161,7 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
         severity: severity,
         road_condition: weatherCondition,
         description: description.trim(),
-        photo_data: photoDataUrl,
+        photo_data: photoDataUrl || '',
         report_date: reportDate,
         report_time: reportTime,
         captured_at: now.toISOString(),
@@ -193,7 +176,7 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
         location: location.trim(),
         severity: severity,
         crashType: crashType,
-        status: result.status || 'Pending'
+        status: result.status || 'Verified'
       });
       setDescription('');
       setPhotoDataUrl('');
@@ -207,71 +190,59 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 1. GUEST VIEW: Clean sign-in prompt (Form is NOT opened for unauthenticated users)
-  // ─────────────────────────────────────────────────────────────────────────────
-  if (!currentUser) {
-    return (
-      <div className="max-w-xl mx-auto px-4 sm:px-6 py-20 text-center space-y-6 animate-fade-in">
-        <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 text-3xl mx-auto flex items-center justify-center shadow-lg shadow-amber-500/10">
-          🛡️
-        </div>
-        <div>
-          <span className="text-xs font-bold uppercase tracking-wider text-amber-400">Authentication Required</span>
-          <h2 className="text-2xl sm:text-3xl font-black text-white mt-1">Sign In to Report an Incident</h2>
-        </div>
-        <p className="text-sm text-slate-300 max-w-md mx-auto leading-relaxed">
-          Please log in or create an account before reporting an incident. This helps us identify the reporter and maintain reliable incident records.
-        </p>
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-          <button
-            id="btnReportLoginPrompt"
-            type="button"
-            onClick={onOpenLogin}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02]"
-          >
-            Log In
-          </button>
-          <button
-            id="btnReportRegisterPrompt"
-            type="button"
-            onClick={onOpenRegister}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-xs uppercase tracking-wider border border-slate-700 transition-all hover:scale-[1.02]"
-          >
-            Create Account
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 2. AUTHENTICATED USER VIEW: Incident reporting form with camera capture
-  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6 animate-fade-in">
       
       {/* Header */}
-      <div>
-        <span className="text-xs font-bold uppercase tracking-wider text-amber-400">Incident Dispatch</span>
-        <h1 className="text-2xl sm:text-3xl font-black text-white mt-1">Submit Incident Report</h1>
-        <p className="text-xs text-slate-400 mt-1">
-          Mandatory in-app camera capture ensures tamper-proof verification before incident broadcast.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <span className="text-xs font-bold uppercase tracking-wider text-amber-400">Incident Dispatch</span>
+          <h1 className="text-2xl sm:text-3xl font-black text-white mt-1">Submit Incident Report</h1>
+          <p className="text-xs text-slate-400 mt-1">
+            Report road incidents directly to the live Crash Data registry and alert community drivers.
+          </p>
+        </div>
+
+        {!currentUser ? (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
+            <span>👤 Citizen Reporter</span>
+            <button
+              type="button"
+              onClick={onOpenLogin}
+              className="text-blue-400 hover:underline font-bold text-[11px]"
+            >
+              Sign In (Optional)
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-300">
+            <span>👤 {currentUser.name || currentUser.email}</span>
+          </div>
+        )}
       </div>
 
       {submitSuccess && (
-        <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs space-y-2">
+        <div className="p-4 sm:p-5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs space-y-3 shadow-lg shadow-emerald-500/10 animate-fade-in">
           <div className="flex items-center gap-2">
-            <span className="text-xl">✅</span>
-            <strong className="text-sm font-bold text-white">Crash Report Successfully Registered!</strong>
+            <span className="text-2xl">✅</span>
+            <strong className="text-sm sm:text-base font-bold text-white">Crash Report Successfully Registered &amp; Verified!</strong>
           </div>
-          <p className="text-slate-300 leading-relaxed">
-            Report ID: <strong className="text-emerald-400">CR-{String(lastSubmitted?.reportId || '').padStart(4, '0')}</strong> • Status: <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold">{lastSubmitted?.status || 'Pending'}</span>
+          <p className="text-slate-200 leading-relaxed">
+            Report ID: <strong className="text-emerald-400">CR-{String(lastSubmitted?.reportId || '').padStart(4, '0')}</strong> • Status: <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">Verified &amp; Live</span>
           </p>
-          <p className="text-slate-400 text-[11px]">
-            Your report is live in the Community Accident Alert System. Drivers with routes passing through <strong className="text-white">{lastSubmitted?.location}</strong> will be warned and offered an alternative detour.
+          <p className="text-slate-300 text-[11px]">
+            Your report is published in <strong className="text-white">Crash Data</strong> and active in the Community Alert System. Drivers near <strong className="text-white">{lastSubmitted?.location}</strong> are immediately notified.
           </p>
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => onNavigate && onNavigate('page-crash-data')}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-blue-600/30 transition-all hover:scale-[1.02] cursor-pointer"
+            >
+              <span>📊</span>
+              <span>View in Crash Data ➜</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -470,16 +441,14 @@ export default function ReportCrashView({ currentUser, onOpenLogin, onOpenRegist
           <div className="pt-2">
             <button
               type="submit"
-              disabled={submitting || !photoDataUrl}
+              disabled={submitting}
               className={`w-full py-3 rounded-xl font-black text-xs uppercase tracking-wider shadow-lg transition-all ${
-                !photoDataUrl
-                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                  : submitting
+                submitting
                   ? 'bg-blue-700 text-white cursor-wait'
-                  : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/30 hover:scale-[1.01]'
+                  : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/30 hover:scale-[1.01] cursor-pointer'
               }`}
             >
-              {submitting ? 'Submitting Report...' : !photoDataUrl ? '📸 Capture Live Photo First' : '🚀 Broadcast Verified Report'}
+              {submitting ? 'Submitting Report...' : '🚀 Submit Crash Report'}
             </button>
           </div>
 

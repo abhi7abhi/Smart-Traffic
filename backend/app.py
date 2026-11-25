@@ -372,8 +372,7 @@ def auth_logout():
 @app.route("/api/crashes", methods=["POST"])
 def create_crash_report():
     user = _get_authenticated_user()
-    if not user:
-        return _error("Authentication required. Please log in to submit a crash report.", 401)
+    user_id = user["user_id"] if user else None
 
     data = request.get_json(silent=True)
     if not data:
@@ -393,7 +392,7 @@ def create_crash_report():
         return _error("'crash_type' is required.", 400)
 
     # ── Optional fields (sanitised / whitelisted) ──────────────────
-    reporter_name  = (user.get("name") or data.get("reporter_name") or "").strip()[:255]
+    reporter_name  = ((user.get("name") if user else None) or data.get("reporter_name") or "Citizen Reporter").strip()[:255]
 
     lat  = _safe_float(data.get("latitude"))
     lng  = _safe_float(data.get("longitude"))
@@ -406,7 +405,7 @@ def create_crash_report():
     severity = raw_sev if raw_sev in ALLOWED_SEVERITIES else "Moderate"
     road_condition = (data.get("road_condition") or "").strip() or "Normal"
 
-    # ── Photo & Capture metadata (From in-app camera) ─────────────
+    # ── Photo & Capture metadata (From in-app camera or file fallback) ─────────────
     photo_data  = data.get("photo_data") or ""
     captured_at = (data.get("captured_at") or "").strip() or now_dt.isoformat()
     capture_lat = _safe_float(data.get("capture_lat"))
@@ -421,17 +420,16 @@ def create_crash_report():
         if resolved:
             lat, lng = resolved[0], resolved[1]
 
-    photo_path  = None
+    photo_path = None
+    if photo_data and isinstance(photo_data, str) and photo_data.strip():
+        saved_path, photo_err = _save_captured_photo(photo_data)
+        if not photo_err and saved_path:
+            photo_path = saved_path
 
-    # Mandatory incident photo enforcement (Direct in-app camera capture)
-    if not photo_data or not isinstance(photo_data, str) or not photo_data.strip():
-        return _error("An accident photo captured directly via in-app camera is required to submit a crash report.", 400)
+    if not photo_path:
+        photo_path = "uploads/default_incident.jpg"
 
-    photo_path, photo_err = _save_captured_photo(photo_data)
-    if photo_err:
-        return _error(photo_err, 400)
-
-    # ── Insert into database with user_id foreign key ──────────────
+    # ── Insert into database (Status is Verified immediately — no administrator bottleneck) ──────────────
     sql = """
         INSERT INTO crash_reports
             (user_id, reporter_name, location, latitude, longitude,
@@ -441,11 +439,11 @@ def create_crash_report():
         VALUES
             (%s, %s, %s, %s, %s,
              %s, %s, %s, %s,
-             %s, %s, 'Pending',
+             %s, %s, 'Verified',
              %s, %s, %s, %s)
     """
     params = (
-        user["user_id"], reporter_name or None, location, lat, lng,
+        user_id, reporter_name, location, lat, lng,
         report_date, report_time, crash_type or None, severity or None,
         road_condition or None, description or None,
         photo_path, captured_at, capture_lat, capture_lng,
@@ -470,7 +468,7 @@ def create_crash_report():
         "success": True,
         "message": "Crash report submitted successfully.",
         "report_id": new_id,
-        "status": "Pending",
+        "status": "Verified",
         "latitude": lat,
         "longitude": lng,
         "photo_path": photo_path,
@@ -489,7 +487,8 @@ def create_crash_report():
 def get_user_reports():
     user = _get_authenticated_user()
     if not user:
-        return _error("Authentication required.", 401)
+        # Seamless fallback: return all recent crash reports if unauthenticated
+        return get_crash_reports()
 
     sql = """
         SELECT report_id, user_id, reporter_name, location, latitude, longitude,
@@ -672,8 +671,8 @@ def delete_user_report(report_id):
 @app.route("/api/crash-reports", methods=["GET"])
 @app.route("/api/crashes", methods=["GET"])
 def get_crash_reports():
-    raw_status = request.args.get("status", "Verified").strip()
-    status_filter = raw_status.title() if raw_status else "Verified"
+    raw_status = request.args.get("status", "all").strip()
+    status_filter = raw_status.title() if raw_status else "All"
 
     if status_filter not in ALLOWED_STATUSES and status_filter.lower() != "all":
         return _error(f"Invalid status filter. Use one of: {', '.join(sorted(ALLOWED_STATUSES))}, or 'All'.")

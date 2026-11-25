@@ -119,6 +119,7 @@ export default function App() {
             currentUser={currentUser}
             onOpenLogin={() => setShowLogin(true)}
             onOpenRegister={() => setShowRegister(true)}
+            onNavigate={(page) => setActivePage(page)}
             onReportSuccess={() => {
               setDashboardRefreshTrigger((prev) => prev + 1);
             }}

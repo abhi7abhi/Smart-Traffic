@@ -39,3 +39,5 @@ env/
 Thumbs.db
 
 .vercel
+
+selenium_test_screenshots/
